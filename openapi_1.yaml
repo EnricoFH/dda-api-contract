@@ -1,0 +1,1424 @@
+openapi: 3.0.3
+info:
+  title: I-Stock Manager API
+  description: >
+    API REST para o sistema de controle de estoque de pastilhas industriais
+    (I-Stock Manager), desenvolvido como projeto integrador da UC de ADS
+    (base: demanda DDA Usinagem Industrial Ltda. / SENAI-SC Fraiburgo).
+    Contrato definido segundo a abordagem API First, previamente à
+    implementação com Spring Boot.
+  version: "1.0.0"
+  contact:
+    name: Equipe 67 - ADS UniSENAI
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Ambiente de desenvolvimento local
+
+tags:
+  - name: Autenticação
+    description: Login e emissão de token de acesso
+  - name: Pastilhas
+    description: Cadastro, consulta e controle de estoque de pastilhas
+  - name: Fabricantes
+    description: Cadastro de fabricantes de pastilhas
+  - name: Fornecedores
+    description: Cadastro de fornecedores e vínculo pastilha-fornecedor
+  - name: Motivos de Movimentação
+    description: Cadastro de motivos de entrada/saída de estoque
+  - name: Movimentações
+    description: Registro e histórico de entradas e saídas de estoque
+  - name: Usuários
+    description: Cadastro e gestão de usuários do sistema
+  - name: Alertas
+    description: Itens em nível crítico de estoque
+  - name: Dashboard
+    description: Indicadores gerais para o painel de acompanhamento
+  - name: Relatórios
+    description: Relatórios de consumo, movimentação e necessidade de reposição
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ------------------------------------------------------------------
+  # AUTENTICAÇÃO
+  # ------------------------------------------------------------------
+  /auth/login:
+    post:
+      tags: [Autenticação]
+      summary: Autentica um usuário e retorna um token de acesso
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginInput'
+            example:
+              email: joao.silva@dda.com.br
+              senha: SenhaForte123!
+      responses:
+        '200':
+          description: Autenticação realizada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+
+  # ------------------------------------------------------------------
+  # PASTILHAS
+  # ------------------------------------------------------------------
+  /pastilhas:
+    get:
+      tags: [Pastilhas]
+      summary: Lista pastilhas cadastradas
+      parameters:
+        - name: codigo
+          in: query
+          description: Filtra por código (busca parcial)
+          schema:
+            type: string
+        - name: descricao
+          in: query
+          description: Filtra por descrição (busca parcial)
+          schema:
+            type: string
+        - name: idFabricante
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: estoqueCritico
+          in: query
+          description: Se true, retorna apenas pastilhas com saldoAtual <= estoqueMinimo
+          schema:
+            type: boolean
+        - name: ativo
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - $ref: '#/components/parameters/PaginaParam'
+        - $ref: '#/components/parameters/TamanhoParam'
+      responses:
+        '200':
+          description: Lista paginada de pastilhas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PastilhaPaginada'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+    post:
+      tags: [Pastilhas]
+      summary: Cadastra uma nova pastilha
+      description: >
+        Toda pastilha deve possuir um fabricante (idFabricante obrigatório) e
+        ao menos um fornecedor associado (lista fornecedoresIds com no
+        mínimo 1 item).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PastilhaInput'
+            example:
+              codigo: PST-1832-CNMG
+              descricao: Pastilha de corte CNMG 120408 classe P
+              idFabricante: 3
+              estoqueMinimo: 20
+              fornecedoresIds: [5, 8]
+      responses:
+        '201':
+          description: Pastilha criada com sucesso
+          headers:
+            Location:
+              description: URI do recurso criado
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pastilha'
+        '400':
+          $ref: '#/components/responses/RequisicaoInvalida'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '409':
+          description: Já existe uma pastilha cadastrada com esse código
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+
+  /pastilhas/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Pastilhas]
+      summary: Consulta uma pastilha pelo id (inclui saldo atual em tempo real)
+      responses:
+        '200':
+          description: Pastilha encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pastilha'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+    put:
+      tags: [Pastilhas]
+      summary: Atualiza os dados cadastrais de uma pastilha
+      description: Não altera saldoAtual, que é mantido apenas via movimentações.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PastilhaInput'
+      responses:
+        '200':
+          description: Pastilha atualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pastilha'
+        '400':
+          $ref: '#/components/responses/RequisicaoInvalida'
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+    delete:
+      tags: [Pastilhas]
+      summary: Inativa uma pastilha (exclusão lógica)
+      responses:
+        '204':
+          description: Pastilha inativada com sucesso
+        '401':
+          $ref: '#/components/responses/NaoAutorizado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: Pastilha possui movimentações vinculadas e não pode ser removida fisicamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+  /pastilhas/{id}/fornecedores:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Fornecedores]
+      summary: Lista os fornecedores associados a uma pastilha
+      responses:
+        '200':
+          description: Lista de fornecedores associados
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Fornecedor'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+    post:
+      tags: [Fornecedores]
+      summary: Associa um fornecedor existente à pastilha
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fornecedorId]
+              properties:
+                fornecedorId:
+                  type: integer
+                  format: int64
+      responses:
+        '201':
+          description: Fornecedor associado com sucesso
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: Fornecedor já associado a essa pastilha
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+  /pastilhas/{id}/fornecedores/{fornecedorId}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+      - name: fornecedorId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    delete:
+      tags: [Fornecedores]
+      summary: Remove a associação entre pastilha e fornecedor
+      description: >
+        Não é permitido remover o último fornecedor de uma pastilha: toda
+        pastilha deve manter ao menos 1 fornecedor associado.
+      responses:
+        '204':
+          description: Associação removida com sucesso
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: Operação não permitida — a pastilha ficaria sem nenhum fornecedor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+  # ------------------------------------------------------------------
+  # FABRICANTES
+  # ------------------------------------------------------------------
+  /fabricantes:
+    get:
+      tags: [Fabricantes]
+      summary: Lista fabricantes cadastrados
+      parameters:
+        - name: nome
+          in: query
+          schema:
+            type: string
+        - name: ativo
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - $ref: '#/components/parameters/PaginaParam'
+        - $ref: '#/components/parameters/TamanhoParam'
+      responses:
+        '200':
+          description: Lista paginada de fabricantes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conteudo:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Fabricante'
+                  pagina:
+                    $ref: '#/components/schemas/InfoPaginacao'
+    post:
+      tags: [Fabricantes]
+      summary: Cadastra um novo fabricante
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FabricanteInput'
+            example:
+              nome: Sandvik Coromant
+      responses:
+        '201':
+          description: Fabricante criado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fabricante'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+
+  /fabricantes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Fabricantes]
+      summary: Consulta um fabricante pelo id
+      responses:
+        '200':
+          description: Fabricante encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fabricante'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+    put:
+      tags: [Fabricantes]
+      summary: Atualiza um fabricante
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FabricanteInput'
+      responses:
+        '200':
+          description: Fabricante atualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fabricante'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+    delete:
+      tags: [Fabricantes]
+      summary: Inativa um fabricante (exclusão lógica — campo ativo)
+      responses:
+        '204':
+          description: Fabricante inativado
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: Fabricante possui pastilhas vinculadas e não pode ser removido fisicamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+  # ------------------------------------------------------------------
+  # FORNECEDORES
+  # ------------------------------------------------------------------
+  /fornecedores:
+    get:
+      tags: [Fornecedores]
+      summary: Lista fornecedores cadastrados
+      parameters:
+        - name: nome
+          in: query
+          schema:
+            type: string
+        - name: ativo
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - $ref: '#/components/parameters/PaginaParam'
+        - $ref: '#/components/parameters/TamanhoParam'
+      responses:
+        '200':
+          description: Lista paginada de fornecedores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conteudo:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Fornecedor'
+                  pagina:
+                    $ref: '#/components/schemas/InfoPaginacao'
+    post:
+      tags: [Fornecedores]
+      summary: Cadastra um novo fornecedor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FornecedorInput'
+            example:
+              nome: Ferramentas Industriais Fraiburgo Ltda.
+              cnpj: "12345678000199"
+              telefone: "(49) 3333-4444"
+              email: contato@ferramentasfraiburgo.com.br
+      responses:
+        '201':
+          description: Fornecedor criado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fornecedor'
+        '400':
+          $ref: '#/components/responses/RequisicaoInvalida'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+
+  /fornecedores/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Fornecedores]
+      summary: Consulta um fornecedor pelo id
+      responses:
+        '200':
+          description: Fornecedor encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fornecedor'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+    put:
+      tags: [Fornecedores]
+      summary: Atualiza um fornecedor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FornecedorInput'
+      responses:
+        '200':
+          description: Fornecedor atualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fornecedor'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+    delete:
+      tags: [Fornecedores]
+      summary: Inativa um fornecedor (exclusão lógica — campo ativo)
+      responses:
+        '204':
+          description: Fornecedor inativado
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: Fornecedor está associado a pastilhas ativas e não pode ser removido fisicamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+  # ------------------------------------------------------------------
+  # MOTIVOS DE MOVIMENTAÇÃO
+  # ------------------------------------------------------------------
+  /motivos-movimentacao:
+    get:
+      tags: [Motivos de Movimentação]
+      summary: Lista motivos de movimentação cadastrados
+      parameters:
+        - name: tipo
+          in: query
+          description: Filtra por tipo de movimentação aplicável
+          schema:
+            $ref: '#/components/schemas/TipoMovimentacao'
+        - name: ativo
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Lista de motivos de movimentação
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MotivoMovimentacao'
+    post:
+      tags: [Motivos de Movimentação]
+      summary: Cadastra um novo motivo de movimentação
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MotivoMovimentacaoInput'
+            example:
+              descricao: Consumo em ordem de produção
+              tipo: SAIDA
+      responses:
+        '201':
+          description: Motivo criado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotivoMovimentacao'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+
+  /motivos-movimentacao/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Motivos de Movimentação]
+      summary: Consulta um motivo de movimentação pelo id
+      responses:
+        '200':
+          description: Motivo encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotivoMovimentacao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+    put:
+      tags: [Motivos de Movimentação]
+      summary: Atualiza um motivo de movimentação
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MotivoMovimentacaoInput'
+      responses:
+        '200':
+          description: Motivo atualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotivoMovimentacao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+    delete:
+      tags: [Motivos de Movimentação]
+      summary: Inativa um motivo de movimentação (exclusão lógica)
+      responses:
+        '204':
+          description: Motivo inativado
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: Motivo possui movimentações vinculadas e não pode ser removido fisicamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+  # ------------------------------------------------------------------
+  # MOVIMENTAÇÕES
+  # ------------------------------------------------------------------
+  /movimentacoes:
+    get:
+      tags: [Movimentações]
+      summary: Consulta o histórico de movimentações de estoque
+      parameters:
+        - name: idPastilha
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: tipo
+          in: query
+          schema:
+            $ref: '#/components/schemas/TipoMovimentacao'
+        - name: idMotivo
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: idUsuario
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: dataInicio
+          in: query
+          description: Filtra movimentações a partir desta data/hora (inclusive)
+          schema:
+            type: string
+            format: date-time
+        - name: dataFim
+          in: query
+          description: Filtra movimentações até esta data/hora (inclusive)
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/PaginaParam'
+        - $ref: '#/components/parameters/TamanhoParam'
+      responses:
+        '200':
+          description: Histórico paginado de movimentações
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conteudo:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Movimentacao'
+                  pagina:
+                    $ref: '#/components/schemas/InfoPaginacao'
+    post:
+      tags: [Movimentações]
+      summary: Registra uma nova movimentação de entrada ou saída
+      description: >
+        Ao registrar uma movimentação, o saldoAtual da pastilha referenciada
+        é atualizado automaticamente pela aplicação (campo denormalizado).
+        Movimentações do tipo SAIDA não podem resultar em saldo negativo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MovimentacaoInput'
+            example:
+              idPastilha: 12
+              tipo: ENTRADA
+              quantidade: 100
+              idMotivo: 2
+              observacao: Recebimento de compra NF 45678
+      responses:
+        '201':
+          description: Movimentação registrada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Movimentacao'
+        '400':
+          $ref: '#/components/responses/RequisicaoInvalida'
+        '404':
+          description: Pastilha ou motivo de movimentação não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '409':
+          description: Saldo insuficiente para realizar a saída solicitada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+
+  /movimentacoes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Movimentações]
+      summary: Consulta uma movimentação pelo id
+      responses:
+        '200':
+          description: Movimentação encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Movimentacao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  # ------------------------------------------------------------------
+  # USUÁRIOS
+  # ------------------------------------------------------------------
+  /usuarios:
+    get:
+      tags: [Usuários]
+      summary: Lista usuários do sistema
+      parameters:
+        - name: ativo
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - $ref: '#/components/parameters/PaginaParam'
+        - $ref: '#/components/parameters/TamanhoParam'
+      responses:
+        '200':
+          description: Lista paginada de usuários
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conteudo:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Usuario'
+                  pagina:
+                    $ref: '#/components/schemas/InfoPaginacao'
+    post:
+      tags: [Usuários]
+      summary: Cadastra um novo usuário
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UsuarioInput'
+            example:
+              nome: João da Silva
+              email: joao.silva@dda.com.br
+              senha: SenhaForte123!
+              perfil: OPERADOR
+      responses:
+        '201':
+          description: Usuário criado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usuario'
+        '409':
+          description: Já existe um usuário cadastrado com esse e-mail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+
+  /usuarios/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Usuários]
+      summary: Consulta um usuário pelo id
+      responses:
+        '200':
+          description: Usuário encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usuario'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+    put:
+      tags: [Usuários]
+      summary: Atualiza os dados de um usuário
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UsuarioAtualizacaoInput'
+      responses:
+        '200':
+          description: Usuário atualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usuario'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/ErroValidacao'
+    delete:
+      tags: [Usuários]
+      summary: Inativa um usuário (exclusão lógica)
+      responses:
+        '204':
+          description: Usuário inativado
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  # ------------------------------------------------------------------
+  # ALERTAS
+  # ------------------------------------------------------------------
+  /alertas:
+    get:
+      tags: [Alertas]
+      summary: Lista pastilhas em nível crítico de estoque
+      description: Retorna todas as pastilhas ativas cujo saldoAtual seja menor ou igual ao estoqueMinimo configurado.
+      responses:
+        '200':
+          description: Lista de alertas de estoque crítico
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Alerta'
+
+  # ------------------------------------------------------------------
+  # DASHBOARD
+  # ------------------------------------------------------------------
+  /dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Retorna indicadores gerais para o painel de acompanhamento
+      responses:
+        '200':
+          description: Indicadores do painel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumoDashboard'
+
+  # ------------------------------------------------------------------
+  # RELATÓRIOS
+  # ------------------------------------------------------------------
+  /relatorios/consumo:
+    get:
+      tags: [Relatórios]
+      summary: Relatório de consumo (saídas) de pastilhas em um período
+      parameters:
+        - name: dataInicio
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: dataFim
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: idFabricante
+          in: query
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Relatório de consumo no período informado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelatorioConsumo'
+        '400':
+          description: Período inválido (dataInicio posterior a dataFim)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+
+  /relatorios/reposicao:
+    get:
+      tags: [Relatórios]
+      summary: Relatório de necessidade de reposição de estoque
+      description: Sugere quando e quanto pedir de matéria-prima com base no saldo atual, no estoque mínimo e no consumo médio recente.
+      responses:
+        '200':
+          description: Relatório de necessidade de reposição
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ItemReposicao'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    PaginaParam:
+      name: pagina
+      in: query
+      description: Número da página (iniciando em 0)
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    TamanhoParam:
+      name: tamanho
+      in: query
+      description: Quantidade de itens por página
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  responses:
+    NaoEncontrado:
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+    NaoAutorizado:
+      description: Token de acesso ausente ou inválido
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+    RequisicaoInvalida:
+      description: Requisição malformada
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+    ErroValidacao:
+      description: Falha de validação dos dados enviados
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErroValidacao'
+
+  schemas:
+    Erro:
+      type: object
+      properties:
+        codigo:
+          type: string
+          example: RECURSO_NAO_ENCONTRADO
+        mensagem:
+          type: string
+          example: Pastilha com id 99 não encontrada
+        timestamp:
+          type: string
+          format: date-time
+
+    ErroValidacao:
+      type: object
+      properties:
+        codigo:
+          type: string
+          example: ERRO_VALIDACAO
+        mensagem:
+          type: string
+          example: Um ou mais campos são inválidos
+        erros:
+          type: array
+          items:
+            type: object
+            properties:
+              campo:
+                type: string
+                example: estoqueMinimo
+              motivo:
+                type: string
+                example: deve ser maior ou igual a zero
+
+    InfoPaginacao:
+      type: object
+      properties:
+        pagina:
+          type: integer
+          example: 0
+        tamanho:
+          type: integer
+          example: 20
+        totalElementos:
+          type: integer
+          format: int64
+          example: 87
+        totalPaginas:
+          type: integer
+          example: 5
+
+    LoginInput:
+      type: object
+      required: [email, senha]
+      properties:
+        email:
+          type: string
+          format: email
+        senha:
+          type: string
+          format: password
+          minLength: 8
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        tipo:
+          type: string
+          example: Bearer
+        expiraEm:
+          type: string
+          format: date-time
+        usuario:
+          $ref: '#/components/schemas/Usuario'
+
+    TipoMovimentacao:
+      type: string
+      enum: [ENTRADA, SAIDA]
+
+    PerfilUsuario:
+      type: string
+      enum: [ADMINISTRADOR, GESTOR, OPERADOR]
+
+    Fabricante:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        nome:
+          type: string
+        ativo:
+          type: boolean
+          default: true
+      example:
+        id: 3
+        nome: Sandvik Coromant
+        ativo: true
+
+    FabricanteInput:
+      type: object
+      required: [nome]
+      properties:
+        nome:
+          type: string
+          minLength: 2
+          maxLength: 120
+
+    Fornecedor:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        nome:
+          type: string
+        cnpj:
+          type: string
+        telefone:
+          type: string
+        email:
+          type: string
+          format: email
+        ativo:
+          type: boolean
+          default: true
+      example:
+        id: 5
+        nome: Ferramentas Industriais Fraiburgo Ltda.
+        cnpj: "12345678000199"
+        telefone: "(49) 3333-4444"
+        email: contato@ferramentasfraiburgo.com.br
+        ativo: true
+
+    FornecedorInput:
+      type: object
+      required: [nome, cnpj]
+      properties:
+        nome:
+          type: string
+          minLength: 2
+          maxLength: 150
+        cnpj:
+          type: string
+          pattern: '^\d{14}$'
+          description: CNPJ contendo apenas números (14 dígitos)
+        telefone:
+          type: string
+        email:
+          type: string
+          format: email
+
+    Pastilha:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        codigo:
+          type: string
+        descricao:
+          type: string
+        idFabricante:
+          type: integer
+          format: int64
+        fabricante:
+          $ref: '#/components/schemas/Fabricante'
+        saldoAtual:
+          type: integer
+          description: Campo denormalizado, atualizado automaticamente a cada movimentação
+          readOnly: true
+        estoqueMinimo:
+          type: integer
+        fornecedoresIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+        ativo:
+          type: boolean
+          default: true
+      example:
+        id: 12
+        codigo: PST-1832-CNMG
+        descricao: Pastilha de corte CNMG 120408 classe P
+        idFabricante: 3
+        saldoAtual: 145
+        estoqueMinimo: 20
+        fornecedoresIds: [5, 8]
+        ativo: true
+
+    PastilhaInput:
+      type: object
+      required: [codigo, descricao, idFabricante, estoqueMinimo, fornecedoresIds]
+      properties:
+        codigo:
+          type: string
+          minLength: 2
+          maxLength: 40
+          description: Código único de identificação da pastilha (conforme ISO 1832)
+        descricao:
+          type: string
+          minLength: 3
+          maxLength: 200
+        idFabricante:
+          type: integer
+          format: int64
+        estoqueMinimo:
+          type: integer
+          minimum: 0
+        fornecedoresIds:
+          type: array
+          description: Toda pastilha deve ter pelo menos 1 fornecedor associado
+          minItems: 1
+          items:
+            type: integer
+            format: int64
+
+    PastilhaPaginada:
+      type: object
+      properties:
+        conteudo:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pastilha'
+        pagina:
+          $ref: '#/components/schemas/InfoPaginacao'
+
+    MotivoMovimentacao:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        descricao:
+          type: string
+        tipo:
+          $ref: '#/components/schemas/TipoMovimentacao'
+        ativo:
+          type: boolean
+          default: true
+      example:
+        id: 2
+        descricao: Recebimento de compra
+        tipo: ENTRADA
+        ativo: true
+
+    MotivoMovimentacaoInput:
+      type: object
+      required: [descricao, tipo]
+      properties:
+        descricao:
+          type: string
+          minLength: 3
+          maxLength: 120
+        tipo:
+          $ref: '#/components/schemas/TipoMovimentacao'
+
+    Movimentacao:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        idPastilha:
+          type: integer
+          format: int64
+        tipo:
+          $ref: '#/components/schemas/TipoMovimentacao'
+        quantidade:
+          type: integer
+        idMotivo:
+          type: integer
+          format: int64
+        idUsuario:
+          type: integer
+          format: int64
+        dataHora:
+          type: string
+          format: date-time
+          readOnly: true
+        observacao:
+          type: string
+      example:
+        id: 501
+        idPastilha: 12
+        tipo: ENTRADA
+        quantidade: 100
+        idMotivo: 2
+        idUsuario: 4
+        dataHora: "2026-08-31T09:15:00-03:00"
+        observacao: Recebimento de compra NF 45678
+
+    MovimentacaoInput:
+      type: object
+      required: [idPastilha, tipo, quantidade, idMotivo]
+      properties:
+        idPastilha:
+          type: integer
+          format: int64
+        tipo:
+          $ref: '#/components/schemas/TipoMovimentacao'
+        quantidade:
+          type: integer
+          minimum: 1
+        idMotivo:
+          type: integer
+          format: int64
+        observacao:
+          type: string
+          maxLength: 250
+
+    Usuario:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        nome:
+          type: string
+        email:
+          type: string
+          format: email
+        perfil:
+          $ref: '#/components/schemas/PerfilUsuario'
+        ativo:
+          type: boolean
+          default: true
+      example:
+        id: 4
+        nome: João da Silva
+        email: joao.silva@dda.com.br
+        perfil: OPERADOR
+        ativo: true
+
+    UsuarioInput:
+      type: object
+      required: [nome, email, senha, perfil]
+      properties:
+        nome:
+          type: string
+          minLength: 3
+          maxLength: 120
+        email:
+          type: string
+          format: email
+        senha:
+          type: string
+          format: password
+          minLength: 8
+          description: Enviada apenas na criação; nunca retornada pela API
+        perfil:
+          $ref: '#/components/schemas/PerfilUsuario'
+
+    UsuarioAtualizacaoInput:
+      type: object
+      required: [nome, email, perfil]
+      properties:
+        nome:
+          type: string
+          minLength: 3
+          maxLength: 120
+        email:
+          type: string
+          format: email
+        perfil:
+          $ref: '#/components/schemas/PerfilUsuario'
+
+    Alerta:
+      type: object
+      properties:
+        idPastilha:
+          type: integer
+          format: int64
+        codigo:
+          type: string
+        descricao:
+          type: string
+        saldoAtual:
+          type: integer
+        estoqueMinimo:
+          type: integer
+        nivel:
+          type: string
+          enum: [CRITICO, ATENCAO]
+          description: CRITICO quando saldoAtual = 0, ATENCAO quando 0 < saldoAtual <= estoqueMinimo
+      example:
+        idPastilha: 12
+        codigo: PST-1832-CNMG
+        descricao: Pastilha de corte CNMG 120408 classe P
+        saldoAtual: 5
+        estoqueMinimo: 20
+        nivel: ATENCAO
+
+    ResumoDashboard:
+      type: object
+      properties:
+        totalPastilhasAtivas:
+          type: integer
+        totalAlertas:
+          type: integer
+        totalMovimentacoesUltimos30Dias:
+          type: integer
+        entradasUltimos30Dias:
+          type: integer
+        saidasUltimos30Dias:
+          type: integer
+        ultimasMovimentacoes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Movimentacao'
+
+    RelatorioConsumo:
+      type: object
+      properties:
+        dataInicio:
+          type: string
+          format: date
+        dataFim:
+          type: string
+          format: date
+        itens:
+          type: array
+          items:
+            type: object
+            properties:
+              idPastilha:
+                type: integer
+                format: int64
+              codigo:
+                type: string
+              descricao:
+                type: string
+              quantidadeConsumida:
+                type: integer
+
+    ItemReposicao:
+      type: object
+      properties:
+        idPastilha:
+          type: integer
+          format: int64
+        codigo:
+          type: string
+        descricao:
+          type: string
+        saldoAtual:
+          type: integer
+        estoqueMinimo:
+          type: integer
+        consumoMedioDiario:
+          type: number
+          format: float
+        quantidadeSugeridaCompra:
+          type: integer
+        diasEstimadosParaEsgotar:
+          type: integer
